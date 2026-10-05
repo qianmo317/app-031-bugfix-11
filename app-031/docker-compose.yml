@@ -1,0 +1,14 @@
+services:
+  app-031:
+    build: .
+    image: app-031-bugfix-11:latest
+    container_name: app-031-bugfix-11
+    ports:
+      - "8211:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

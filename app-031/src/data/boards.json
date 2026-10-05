@@ -1,0 +1,75 @@
+{
+  "stockBoards": [
+    {
+      "name": "颗粒板 2440×1220×18",
+      "wMm": 2440,
+      "hMm": 1220,
+      "thicknessMm": 18,
+      "material": "颗粒板",
+      "priceCents": 13800
+    },
+    {
+      "name": "多层实木板 2440×1220×18",
+      "wMm": 2440,
+      "hMm": 1220,
+      "thicknessMm": 18,
+      "material": "多层板",
+      "priceCents": 21500
+    },
+    {
+      "name": "颗粒板 2440×1220×25",
+      "wMm": 2440,
+      "hMm": 1220,
+      "thicknessMm": 25,
+      "material": "颗粒板",
+      "priceCents": 17500
+    },
+    {
+      "name": "颗粒板 2745×1220×18",
+      "wMm": 2745,
+      "hMm": 1220,
+      "thicknessMm": 18,
+      "material": "颗粒板",
+      "priceCents": 16800
+    },
+    {
+      "name": "多层实木板 2745×1220×18",
+      "wMm": 2745,
+      "hMm": 1220,
+      "thicknessMm": 18,
+      "material": "多层板",
+      "priceCents": 25800
+    },
+    {
+      "name": "颗粒板 1830×915×18",
+      "wMm": 1830,
+      "hMm": 915,
+      "thicknessMm": 18,
+      "material": "颗粒板",
+      "priceCents": 8600
+    },
+    {
+      "name": "中纤背板 2440×1220×9",
+      "wMm": 2440,
+      "hMm": 1220,
+      "thicknessMm": 9,
+      "material": "中纤板",
+      "priceCents": 9800
+    }
+  ],
+  "hardware": {
+    "connectorPerPart": 4,
+    "connectorName": "三合一连接件（套）",
+    "dowelPerPart": 2,
+    "dowelName": "木榫（个）",
+    "glueGramPerEdgeMeter": 60,
+    "glueName": "封边热熔胶（kg）",
+    "screwPerPart": 6,
+    "screwName": "自攻螺丝（颗）"
+  },
+  "defaults": {
+    "kerfMm": 3.2,
+    "trimMm": 8,
+    "offcutMinMm": 300
+  }
+}
