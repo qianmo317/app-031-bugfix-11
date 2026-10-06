@@ -7,7 +7,8 @@ import {
   deleteJob,
   duplicateJob,
   createSampleJob,
-  importJobJson
+  importJobJson,
+  jobPieceCount
 } from '../lib/store'
 import { runSelfTest, type SelfTestReport } from '../lib/selftest'
 import { toast } from '../lib/ui'
@@ -26,7 +27,7 @@ const availableOffcuts = computed(() => state.offcuts.filter((o) => o.available)
 
 function totalQty(jobId: string): number {
   const j = state.jobs.find((x) => x.id === jobId)
-  return j ? j.parts.length : 0
+  return j ? jobPieceCount(j) : 0
 }
 
 function onCreate(): void {
@@ -46,7 +47,7 @@ function onDelete(id: string, name: string): void {
 }
 function onDuplicate(id: string): void {
   const j = duplicateJob(id)
-  if (j) toast('已复制（排样结果需重新生成）', 'good')
+  if (j) toast(`已复制为「${j.name}」，副本不带原排样结果，需重新排样`, 'good')
 }
 async function runTest(): Promise<void> {
   testing.value = true

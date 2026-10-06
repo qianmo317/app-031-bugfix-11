@@ -47,10 +47,28 @@ function save(): void {
   if (job.value) saveJob(job.value)
 }
 
+/** 任何影响排样结果的编辑都走这里：作废旧结果再落盘。 */
+function onNestInputChange(): void {
+  invalidateResult()
+  save()
+}
+
+/**
+ * 零件/板材一变，旧排样的用板张数、利用率就是按旧清单算的假数；
+ * 清掉结果，让排样页/统计页与列表上的「未排样」跟当前清单一致，重排后再恢复。
+ */
+function invalidateResult(): void {
+  if (job.value?.result) {
+    job.value.result = undefined
+    toast('清单已变更，旧排样结果作废，请重新排样', 'info')
+  }
+}
+
 function addBoard(): void {
   if (!job.value) return
   const t = allStockTemplates()[3] // 2745×1220
   job.value.boards.push({ ...t, id: uid('b') } as Board)
+  invalidateResult()
   save()
 }
 function onPickTemplate(e: Event): void {
@@ -66,6 +84,7 @@ function addSpecificBoard(t: ReturnType<typeof allStockTemplates>[number]): void
     return
   }
   job.value.boards.push({ ...t, id: uid('b') } as Board)
+  invalidateResult()
   save()
 }
 function removeBoard(id: string): void {
@@ -76,6 +95,7 @@ function removeBoard(id: string): void {
   }
   job.value.boards = job.value.boards.filter((b) => b.id !== id)
   for (const p of job.value.parts) if (p.boardId === id) p.boardId = ''
+  invalidateResult()
   save()
 }
 function toggleOffcut(id: string): void {
@@ -84,6 +104,7 @@ function toggleOffcut(id: string): void {
   const i = arr.indexOf(id)
   if (i >= 0) arr.splice(i, 1)
   else arr.push(id)
+  invalidateResult()
   save()
 }
 
@@ -94,22 +115,27 @@ function addPart(): void {
       name: '新零件'
     })
   )
+  invalidateResult()
   save()
 }
 function removePart(id: string): void {
   if (!job.value) return
   job.value.parts = job.value.parts.filter((p) => p.id !== id)
+  invalidateResult()
   save()
 }
 function duplicatePart(p: Part): void {
   const idx = job.value!.parts.findIndex((x) => x.id === p.id)
   job.value!.parts.splice(idx + 1, 0, { ...p, id: uid('p') })
+  invalidateResult()
   save()
 }
 function toggleEdge(p: Part, e: EdgeSide): void {
   const i = p.edgeBands.indexOf(e)
   if (i >= 0) p.edgeBands.splice(i, 1)
   else p.edgeBands.push(e)
+  // 封边总长在排样时算进 result，改了就得重排，统计页才不会挂旧数
+  invalidateResult()
   save()
 }
 
@@ -159,6 +185,7 @@ function doImport(): void {
   )
   if (importReplace.value) job.value.parts = built
   else job.value.parts.push(...built)
+  invalidateResult()
   save()
   toast(`已导入 ${built.length} 条`, 'good')
   importOpen.value = false
@@ -207,14 +234,14 @@ const sampleTsv = `名称\t长\t宽\t数量\t纹理\t封边\t柜体\t见光
       <div class="row wrap" style="align-items: flex-end">
         <label class="field" style="width: 130px">
           <span>锯路 kerf (mm)</span>
-          <input v-model.number="job.kerfMm" type="number" step="0.1" min="1" max="8" @change="save" />
+          <input v-model.number="job.kerfMm" type="number" step="0.1" min="1" max="8" @change="onNestInputChange" />
         </label>
         <label class="field" style="width: 130px">
           <span>四周修边 (mm)</span>
-          <input v-model.number="job.trimMm" type="number" step="1" min="0" max="20" @change="save" />
+          <input v-model.number="job.trimMm" type="number" step="1" min="0" max="20" @change="onNestInputChange" />
         </label>
         <label class="field row" style="margin-bottom: 10px">
-          <input type="checkbox" v-model="job.batchByCabinet" @change="save" />
+          <input type="checkbox" v-model="job.batchByCabinet" @change="onNestInputChange" />
           <span style="margin: 0 0 0 6px">按柜体批次分组开料（同柜零件尽量连续排）</span>
         </label>
       </div>
@@ -258,9 +285,9 @@ const sampleTsv = `名称\t长\t宽\t数量\t纹理\t封边\t柜体\t见光
               <input v-model="b.name" @change="save" />
               <input v-model="b.material" @change="save" class="sub-input" placeholder="材质" />
             </td>
-            <td style="width: 96px"><input v-model.number="b.wMm" type="number" @change="save" /></td>
-            <td style="width: 96px"><input v-model.number="b.hMm" type="number" @change="save" /></td>
-            <td style="width: 84px"><input v-model.number="b.thicknessMm" type="number" @change="save" /></td>
+            <td style="width: 96px"><input v-model.number="b.wMm" type="number" @change="onNestInputChange" /></td>
+            <td style="width: 96px"><input v-model.number="b.hMm" type="number" @change="onNestInputChange" /></td>
+            <td style="width: 84px"><input v-model.number="b.thicknessMm" type="number" @change="onNestInputChange" /></td>
             <td style="width: 110px"><input v-model.number="b.priceCents" type="number" @change="save" /></td>
             <td style="width: 130px"><input v-model.number="b.quantity" type="number" min="0" @change="save" /></td>
             <td style="width: 46px"><button class="sm ghost-danger" @click="removeBoard(b.id)">删</button></td>
@@ -319,11 +346,11 @@ const sampleTsv = `名称\t长\t宽\t数量\t纹理\t封边\t柜体\t见光
             <tr v-for="p in job.parts" :key="p.id">
               <td><input v-model="p.code" @change="save" /></td>
               <td><input v-model="p.name" @change="save" /></td>
-              <td><input v-model.number="p.lenMm" type="number" min="1" @change="save" /></td>
-              <td><input v-model.number="p.widMm" type="number" min="1" @change="save" /></td>
-              <td><input v-model.number="p.qty" type="number" min="1" @change="save" /></td>
+              <td><input v-model.number="p.lenMm" type="number" min="1" @change="onNestInputChange" /></td>
+              <td><input v-model.number="p.widMm" type="number" min="1" @change="onNestInputChange" /></td>
+              <td><input v-model.number="p.qty" type="number" min="1" @change="onNestInputChange" /></td>
               <td>
-                <select v-model="p.grain" @change="save">
+                <select v-model="p.grain" @change="onNestInputChange">
                   <option v-for="(lab, g) in grainLabel" :key="g" :value="g">{{ lab }}</option>
                 </select>
               </td>
@@ -336,9 +363,9 @@ const sampleTsv = `名称\t长\t宽\t数量\t纹理\t封边\t柜体\t见光
                 </div>
               </td>
               <td><input v-model="p.cabinet" @change="save" /></td>
-              <td style="text-align: center"><input type="checkbox" v-model="p.exposed" @change="save" /></td>
+              <td style="text-align: center"><input type="checkbox" v-model="p.exposed" @change="onNestInputChange" /></td>
               <td>
-                <select v-model="p.boardId" @change="save">
+                <select v-model="p.boardId" @change="onNestInputChange">
                   <option value="">自动</option>
                   <option v-for="b in job.boards" :key="b.id" :value="b.id">{{ b.name }}</option>
                 </select>
@@ -362,9 +389,18 @@ const sampleTsv = `名称\t长\t宽\t数量\t纹理\t封边\t柜体\t见光
       </button>
     </div>
   </div>
+  <div v-else class="panel empty">
+    <p>该项目不存在或已被删除。</p>
+    <router-link to="/"><button class="primary">返回项目列表</button></router-link>
+  </div>
 </template>
 
 <style scoped>
+.empty {
+  text-align: center;
+  color: var(--c-ink-2);
+  padding: 50px;
+}
 .offcut-chip {
   display: inline-flex;
   align-items: center;

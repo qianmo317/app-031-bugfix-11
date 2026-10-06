@@ -80,9 +80,18 @@ function exportJson(): void {
       </ul>
     </section>
   </div>
+  <div v-else class="panel empty">
+    <p>该项目不存在或已被删除。</p>
+    <router-link to="/"><button class="primary">返回项目列表</button></router-link>
+  </div>
 </template>
 
 <style scoped>
+.empty {
+  text-align: center;
+  color: var(--c-ink-2);
+  padding: 50px;
+}
 .sec-list {
   display: flex;
   flex-direction: column;
