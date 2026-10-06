@@ -362,9 +362,18 @@ const sampleTsv = `名称\t长\t宽\t数量\t纹理\t封边\t柜体\t见光
       </button>
     </div>
   </div>
+  <div v-else class="panel empty">
+    <p>该项目不存在或已从列表删除。</p>
+    <router-link to="/"><button class="primary">返回项目列表</button></router-link>
+  </div>
 </template>
 
 <style scoped>
+.empty {
+  text-align: center;
+  padding: 50px;
+  color: var(--c-ink-2);
+}
 .offcut-chip {
   display: inline-flex;
   align-items: center;

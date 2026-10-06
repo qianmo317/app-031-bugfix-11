@@ -152,6 +152,10 @@ const utilMinMax = computed(() => {
       </section>
     </div>
   </div>
+  <div v-else-if="!job" class="panel empty">
+    <p>该项目不存在或已从列表删除。</p>
+    <router-link to="/"><button class="primary">返回项目列表</button></router-link>
+  </div>
   <div v-else class="panel empty">
     <p>该项目还没有排样结果。</p>
     <router-link :to="`/parts/${route.params.id}`"><button class="primary">去排样</button></router-link>

@@ -1,6 +1,14 @@
 // 全局状态：Vue reactive 单例 + localStorage 持久化（无 Pinia/Vuex）
 import { reactive, computed } from 'vue'
-import type { Board, Job, NestResult, Part, RegisteredOffcut, SheetResult } from '../types'
+import type {
+  Board,
+  EdgeSide,
+  Job,
+  NestResult,
+  Part,
+  RegisteredOffcut,
+  SheetResult
+} from '../types'
 import { nestJob } from './packing'
 import { rebuildFromPlacements } from './cuts'
 import { guillotineViolation } from './geometry'
@@ -35,15 +43,211 @@ const state = reactive<State>({
 })
 
 function persist(): void {
+  // 约定：所有写操作先改内存里的 state，再整份写回本机存储。
   localStorage.setItem(JOBS_KEY, JSON.stringify(state.jobs))
   localStorage.setItem(OFFCUTS_KEY, JSON.stringify(state.offcuts))
 }
 
+// ---- 读档兼容：旧存档里可能有缺字段、重复编号的复制副本，逐条按默认值补全 ----
+
+function asNum(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+function asStr(v: unknown, fallback: string): string {
+  return typeof v === 'string' ? v : fallback
+}
+function asBool(v: unknown, fallback: boolean): boolean {
+  return typeof v === 'boolean' ? v : fallback
+}
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+function freshId(prefix: string, used: Set<string>): string {
+  let id = uid(prefix)
+  while (used.has(id)) id = uid(prefix)
+  used.add(id)
+  return id
+}
+
+function hydratePart(raw: unknown, boardIds: Set<string>): Part | null {
+  if (!isObj(raw)) return null
+  const id = asStr(raw.id, '') || uid('p')
+  const qty = Math.max(0, Math.floor(asNum(raw.qty, 1)))
+  const grain = ['length', 'width', 'none'].includes(asStr(raw.grain, ''))
+    ? (raw.grain as Part['grain'])
+    : 'none'
+  const edgeBands = Array.isArray(raw.edgeBands)
+    ? (raw.edgeBands.filter((e) => ['top', 'bottom', 'left', 'right'].includes(e as string)) as EdgeSide[])
+    : []
+  const boardId = asStr(raw.boardId, '')
+  return {
+    id,
+    code: asStr(raw.code, ''),
+    name: asStr(raw.name, ''),
+    lenMm: asNum(raw.lenMm, 0),
+    widMm: asNum(raw.widMm, 0),
+    qty,
+    grain,
+    edgeBands,
+    cabinet: asStr(raw.cabinet, '未分组') || '未分组',
+    exposed: asBool(raw.exposed, false),
+    // 指定板材若已不在库中，回落为自动分配，避免悬空引用
+    boardId: boardId && boardIds.has(boardId) ? boardId : ''
+  }
+}
+
+function hydrateBoard(raw: unknown): Board | null {
+  if (!isObj(raw)) return null
+  const kind = raw.kind === 'offcut' ? 'offcut' : 'stock'
+  return {
+    id: asStr(raw.id, '') || uid('b'),
+    name: asStr(raw.name, '未命名板材') || '未命名板材',
+    wMm: asNum(raw.wMm, 0),
+    hMm: asNum(raw.hMm, 0),
+    thicknessMm: asNum(raw.thicknessMm, 0),
+    material: asStr(raw.material, ''),
+    priceCents: asNum(raw.priceCents, 0),
+    quantity: Math.max(0, Math.floor(asNum(raw.quantity, 0))),
+    kind,
+    offcutId: kind === 'offcut' ? asStr(raw.offcutId, '') : undefined
+  }
+}
+
+/** 排样结果必须结构完整，否则视为旧副本残留的脏数据直接丢弃（项目本体照常可用）。 */
+function sanitizeResult(raw: unknown): NestResult | undefined {
+  if (!isObj(raw) || !Array.isArray(raw.sheets) || raw.sheets.length === 0) return undefined
+  for (const s of raw.sheets) {
+    if (
+      !isObj(s) ||
+      !Array.isArray(s.placements) ||
+      !Array.isArray(s.steps) ||
+      typeof s.wMm !== 'number' ||
+      typeof s.hMm !== 'number'
+    ) {
+      return undefined
+    }
+  }
+  const r = raw as unknown as NestResult
+  r.boardsUsed = asNum(r.boardsUsed, r.sheets.length)
+  r.boardsByType = isObj(r.boardsByType) ? (r.boardsByType as Record<string, number>) : {}
+  r.edgeBandM = isObj(r.edgeBandM)
+    ? { exposed: asNum(r.edgeBandM.exposed, 0), normal: asNum(r.edgeBandM.normal, 0) }
+    : { exposed: 0, normal: 0 }
+  r.unplaced = Array.isArray(r.unplaced) ? r.unplaced : []
+  r.baselineBoards = asNum(r.baselineBoards, r.boardsUsed)
+  r.savedBoards = asNum(r.savedBoards, 0)
+  r.savedCents = asNum(r.savedCents, 0)
+  r.totalCostCents = asNum(r.totalCostCents, 0)
+  r.stockShortage = Array.isArray(r.stockShortage) ? r.stockShortage : []
+  r.elapsedMs = asNum(r.elapsedMs, 0)
+  r.generatedAt = asNum(r.generatedAt, Date.now())
+  return r
+}
+
+function hydrateJob(raw: unknown, usedJobIds: Set<string>): Job | null {
+  if (!isObj(raw)) return null
+  const boardList = Array.isArray(raw.boards)
+    ? (raw.boards.map(hydrateBoard).filter(Boolean) as Board[])
+    : []
+  if (boardList.length === 0) return null // 连板材库都没有的不是有效项目
+  // 板材编号在本单内去重（旧复制副本可能整份克隆过编号）
+  const boardIds = new Set<string>()
+  for (const b of boardList) {
+    if (boardIds.has(b.id)) b.id = freshId('b', boardIds)
+    else boardIds.add(b.id)
+  }
+  const partList = Array.isArray(raw.parts)
+    ? (raw.parts.map((p) => hydratePart(p, boardIds)).filter(Boolean) as Part[])
+    : []
+  const partIds = new Set<string>()
+  for (const p of partList) {
+    if (partIds.has(p.id)) p.id = freshId('p', partIds)
+    else partIds.add(p.id)
+  }
+  let id = asStr(raw.id, '') || uid('job')
+  if (usedJobIds.has(id)) {
+    // 项目编号重复（早先复制留下的）：换编号，并作废其排样结果——
+    // 旧结果里的引用已无法保证与现存零件一致。
+    id = freshId('job', usedJobIds)
+    raw.result = undefined
+  } else {
+    usedJobIds.add(id)
+  }
+  const name = asStr(raw.name, '').trim() || `未命名项目 ${id.slice(-4)}`
+  return {
+    id,
+    name,
+    createdAt: asNum(raw.createdAt, Date.now()),
+    boards: boardList,
+    parts: partList,
+    kerfMm: asNum(raw.kerfMm, boardsData.defaults.kerfMm),
+    trimMm: asNum(raw.trimMm, boardsData.defaults.trimMm),
+    useOffcutIds: Array.isArray(raw.useOffcutIds)
+      ? raw.useOffcutIds.filter((x): x is string => typeof x === 'string')
+      : [],
+    batchByCabinet: asBool(raw.batchByCabinet, false),
+    result: sanitizeResult(raw.result)
+  }
+}
+
+function hydrateOffcut(raw: unknown): RegisteredOffcut | null {
+  if (!isObj(raw)) return null
+  return {
+    id: asStr(raw.id, '') || uid('oc'),
+    jobId: asStr(raw.jobId, ''),
+    jobName: asStr(raw.jobName, ''),
+    sheetIndex: Math.floor(asNum(raw.sheetIndex, -1)),
+    wMm: asNum(raw.wMm, 0),
+    hMm: asNum(raw.hMm, 0),
+    thicknessMm: asNum(raw.thicknessMm, 0),
+    material: asStr(raw.material, ''),
+    createdAt: asNum(raw.createdAt, Date.now()),
+    available: asBool(raw.available, true),
+    usedByJobId:
+      typeof raw.usedByJobId === 'string' && raw.usedByJobId ? raw.usedByJobId : undefined
+  }
+}
+
 function init(): void {
   if (state.loaded) return
-  state.jobs = load<Job[]>(JOBS_KEY, [])
-  state.offcuts = load<RegisteredOffcut[]>(OFFCUTS_KEY, [])
+  const usedJobIds = new Set<string>()
+  const jobs = load<unknown[]>(JOBS_KEY, [])
+    .map((raw) => hydrateJob(raw, usedJobIds))
+    .filter((j): j is Job => j !== null)
+  // 新项目永远排在最前面：按创建时间倒序（同时间保持读入顺序，稳定排序）
+  jobs.sort((a, b) => b.createdAt - a.createdAt)
+  // 旧存档里可能已有重名项目（旧复制只按名字展示），读回时补齐为互不重名
+  const names = new Set<string>()
+  for (const j of jobs) {
+    let name = j.name
+    let n = 2
+    while (names.has(name)) {
+      name = `${j.name} ${n++}`
+    }
+    j.name = name
+    names.add(name)
+  }
+  state.jobs = jobs
+  state.offcuts = load<unknown[]>(OFFCUTS_KEY, [])
+    .map(hydrateOffcut)
+    .filter((o): o is RegisteredOffcut => o !== null)
   state.loaded = true
+  persist() // 兼容补全后的整份清单立即写回，避免旧脏数据反复进入逻辑
+}
+
+/** 清单上唯一的项目名：连点两下复制也不能落下重名/重编号的项目。 */
+function uniqueJobName(base: string): string {
+  let name = base
+  let n = 2
+  while (state.jobs.some((j) => j.name === name)) {
+    name = `${base} ${n}`
+    n++
+  }
+  return name
+}
+
+function defaultJobName(): string {
+  return uniqueJobName('未命名项目')
 }
 
 export function defaultBoards(): Board[] {
@@ -75,9 +279,10 @@ export function allStockTemplates(): Omit<Board, 'id'>[] {
 
 export function createJob(name: string): Job {
   init()
+  const finalName = name.trim() ? uniqueJobName(name.trim()) : defaultJobName()
   const job: Job = {
     id: uid('job'),
-    name,
+    name: finalName,
     createdAt: Date.now(),
     boards: defaultBoards(),
     parts: [],
@@ -86,23 +291,58 @@ export function createJob(name: string): Job {
     useOffcutIds: [],
     batchByCabinet: false
   }
-  state.jobs.push(job)
+  state.jobs.unshift(job) // 新项目排最前
   persist()
   return job
 }
 
 export function deleteJob(id: string): void {
-  const job = state.jobs.find((j) => j.id === id)
-  if (!job) return
-  state.jobs = state.jobs.filter((j) => j.name !== job.name)
+  init()
+  const before = state.jobs.length
+  // 只删编号相同的那一条；同名的其它项目保留
+  state.jobs = state.jobs.filter((j) => j.id !== id)
+  if (state.jobs.length !== before) persist() // 删完立刻整份写回本机存储
 }
 
+/** 零件总件数（按每行数量合计，不是清单行数）。列表/统计共用同一口径。 */
+export function jobPieceCount(job: Job): number {
+  return job.parts.reduce((a, p) => a + (Number.isFinite(p.qty) && p.qty > 0 ? p.qty : 0), 0)
+}
+
+/**
+ * 复制项目。
+ * 取舍（二选一里选“清掉排样结果”）：副本深拷贝原单的板材库与零件清单并换全新编号，
+ * 但不带 result——副本一打开显示“未排样”，没有用板张数/料钱/利用率可看。
+ * 理由：若把上次排样带过去，副本顶的就是一份按原单零件算出来的张数与金额，
+ * 副本零件一改立刻对不上；一旦写回本机存档，存档里的副本及按它导出的单据全部作废。
+ * 清掉只多花一次重排，换来任何时刻副本里的数都自洽。
+ */
 export function duplicateJob(id: string): Job | null {
+  init()
   const src = state.jobs.find((j) => j.id === id)
   if (!src) return null
-  state.jobs.unshift({ ...src, name: `${src.name} 副本` })
+  // JSON 深拷贝切断 parts/boards 数组与原单的共享（旧版浅拷贝导致改副本原单跟着变）
+  const copy: Job = {
+    ...(JSON.parse(JSON.stringify(src)) as Job),
+    id: uid('job'),
+    name: uniqueJobName(`${src.name} 副本`),
+    createdAt: Date.now(),
+    result: undefined // 明确当作尚未排样
+  }
+  // 深拷贝已切断与原单的数组共享；编号也全部换新，避免双份同 id
+  const boardIdMap = new Map<string, string>()
+  for (const b of copy.boards) {
+    const nid = uid('b')
+    boardIdMap.set(b.id, nid)
+    b.id = nid
+  }
+  for (const p of copy.parts) {
+    p.id = uid('p')
+    if (p.boardId && boardIdMap.has(p.boardId)) p.boardId = boardIdMap.get(p.boardId)!
+  }
+  state.jobs.unshift(copy)
   persist()
-  return src
+  return copy
 }
 
 export function saveJob(_job: Job): void {
@@ -356,15 +596,23 @@ export function exportJobJson(job: Job): string {
 }
 
 export function importJobJson(json: string): Job | null {
+  init()
   try {
-    const obj = JSON.parse(json) as Job
-    if (!obj.parts || !obj.boards) return null
-    obj.id = uid('job')
-    obj.createdAt = Date.now()
+    const obj = JSON.parse(json)
+    if (!isObj(obj) || !Array.isArray(obj.parts) || !Array.isArray(obj.boards)) return null
+    // 导入即新项目：预置一个不冲突的新编号，走与读档同一套补全
+    // （缺字段补默认、旧排样结果作废、板材/零件引用修复）
+    const usedIds = new Set(state.jobs.map((j) => j.id))
+    obj.id = freshId('job', usedIds)
     obj.result = undefined
-    state.jobs.unshift(obj)
+    obj.createdAt = Date.now()
+    const job = hydrateJob(obj, usedIds)
+    if (!job) return null
+    const trimmed = asStr(obj.name, '').trim()
+    job.name = trimmed ? uniqueJobName(trimmed) : defaultJobName()
+    state.jobs.unshift(job)
     persist()
-    return obj
+    return job
   } catch {
     return null
   }

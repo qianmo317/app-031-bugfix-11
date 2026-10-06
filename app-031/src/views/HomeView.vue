@@ -7,7 +7,8 @@ import {
   deleteJob,
   duplicateJob,
   createSampleJob,
-  importJobJson
+  importJobJson,
+  jobPieceCount
 } from '../lib/store'
 import { runSelfTest, type SelfTestReport } from '../lib/selftest'
 import { toast } from '../lib/ui'
@@ -26,10 +27,12 @@ const availableOffcuts = computed(() => state.offcuts.filter((o) => o.available)
 
 function totalQty(jobId: string): number {
   const j = state.jobs.find((x) => x.id === jobId)
-  return j ? j.parts.length : 0
+  // 件数 = 每种零件的数量合计，不是清单里写了几行
+  return j ? jobPieceCount(j) : 0
 }
 
 function onCreate(): void {
+  // 名字留空也能建：store 会按「未命名项目」补默认名
   const job = createJob(newName.value)
   newName.value = ''
   router.push(`/parts/${job.id}`)
@@ -46,7 +49,7 @@ function onDelete(id: string, name: string): void {
 }
 function onDuplicate(id: string): void {
   const j = duplicateJob(id)
-  if (j) toast('已复制（排样结果需重新生成）', 'good')
+  if (j) toast('已复制：零件与板材库独立，排样结果需重新生成', 'good')
 }
 async function runTest(): Promise<void> {
   testing.value = true
